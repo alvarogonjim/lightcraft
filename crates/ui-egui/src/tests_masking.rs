@@ -329,6 +329,47 @@ fn a_click_without_a_drag_says_how_to_draw_the_gradient() {
     }
 }
 
+/// #2311: the modifier keys draw as in Lightroom Classic. ⌥ / Alt draws a radial gradient from a corner of its
+/// bounding box, and a linear one out from where the drag began, both ways; ⇧ makes the ellipse a circle and keeps the
+/// linear gradient horizontal or vertical.
+#[test]
+fn modifier_keys_draw_gradients_as_lightroom_does() {
+    let mut h = detail("panel.masking");
+    let img = h.app.image_rect.unwrap();
+    let long = img.width().max(img.height()) as f64;
+    // a normalized unit across and down the photo, in long-edge units
+    let (ux, uy) = (img.width() as f64 / long, img.height() as f64 / long);
+    let draw = |h: &mut Headless, kind: &str, from: (f64, f64), to: (f64, f64), keys: serde_json::Value| {
+        click(h, &format!("maskNew:{kind}"));
+        let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+        let mut req = json!({"events": [{"kind": "down", "x": from.0, "y": from.1}, {"kind": "drag", "x": mid.0, "y": mid.1},
+            {"kind": "drag", "x": to.0, "y": to.1}, {"kind": "up", "x": to.0, "y": to.1}]});
+        for (k, v) in keys.as_object().unwrap() {
+            req[k] = v.clone();
+        }
+        let r = h.request("ui.pointer", req, T);
+        assert_eq!(r["ok"], true, "{r}");
+        develop(h).masks.last().unwrap().components[0].shape.clone()
+    };
+    let near = |a: f64, b: f64| (a - b).abs() < 0.005;
+
+    // ⌥: the drag spans the ellipse's bounding box
+    let MaskShape::Radial { center, rx, ry, .. } = draw(&mut h, "radial", (0.3, 0.3), (0.5, 0.7), json!({"alt": true})) else { panic!("radial") };
+    assert!(near(center.x, 0.4) && near(center.y, 0.5), "{center:?}");
+    assert!(near(rx, 0.1 * ux) && near(ry, 0.2 * uy), "{rx} {ry}");
+    // ⇧: a circle centred where the drag began, as wide as the drag's longer side
+    let MaskShape::Radial { center, rx, ry, .. } = draw(&mut h, "radial", (0.5, 0.5), (0.7, 0.6), json!({"shift": true})) else { panic!("radial") };
+    assert!(near(center.x, 0.5) && near(center.y, 0.5), "{center:?}");
+    assert!(near(rx, ry) && near(rx, (0.2 * ux).max(0.1 * uy)), "{rx} {ry}");
+    // ⌥: out from where the drag began, as far back as forwards
+    let MaskShape::Linear { start, end } = draw(&mut h, "linear", (0.5, 0.5), (0.6, 0.7), json!({"alt": true})) else { panic!("linear") };
+    assert!(near(start.x, 0.4) && near(start.y, 0.3) && near(end.x, 0.6) && near(end.y, 0.7), "{start:?} {end:?}");
+    // ⇧: straight down, as the drag is nearer vertical than horizontal
+    let MaskShape::Linear { start, end } = draw(&mut h, "linear", (0.3, 0.3), (0.35, 0.6), json!({"shift": true})) else { panic!("linear") };
+    assert!(near(start.x, 0.3) && near(start.y, 0.3) && near(end.x, 0.3) && near(end.y, 0.6), "{start:?} {end:?}");
+    assert_eq!(develop(&h).masks.len(), 4, "a mask for each drag");
+}
+
 /// #2311: L / R and Add / Subtract ▸ Linear or Radial Gradient pick the tool too; a drag draws the component into the
 /// selected mask, and Esc puts the tool down.
 #[test]
