@@ -6,9 +6,9 @@
 //! S5000, S5200, S5500, S6000fd, S6500fd, S7000, S9500, S9600, S100FS, S200EXR), each checked against the camera's
 //! own embedded JPEG:
 //!
-//! - The raw block is `0x0100` (rows, columns) unpacked 16-bit samples: 14-bit little-endian, or 12-bit big-endian
-//!   in the oldest body (S2Pro). Read in the wrong order nearly every sample lands at or above 2^14, so the order
-//!   that keeps them below decides.
+//! - The raw block is exactly `0x0100` (rows, columns) unpacked 16-bit samples: 14-bit little-endian, or 12-bit
+//!   big-endian in the oldest body (S2Pro). Read in the wrong order nearly every sample lands at or above 2^14, so the
+//!   order that keeps them below decides (the body, when a black or flat frame can't).
 //! - Record `0x4000` (eight `u16`) matches the dark floor where the camera left the black level in (S100FS ≈ 514,
 //!   S200EXR ≈ 517, S2Pro ≈ 122) and is zero where the floor is zero.
 //! - The first FujiLayout byte tells the layout. 8–11: an ordinary Bayer, RGGB at (0, 0), its crop records in
@@ -184,8 +184,10 @@ fn layout(h: &Header, rows: usize, cols: usize) -> Result<Layout> {
     }
 }
 
-/// Whether the samples are big-endian: the reading that leaves fewer of them at or above 2^14.
-fn big_endian(src: &[u8]) -> bool {
+/// Whether the samples are big-endian: the reading that leaves fewer of them at or above 2^14. When both leave as
+/// many (every sample fits read either way, as in a black or flat frame), the body decides: the S2Pro, the one
+/// big-endian body known, or little-endian for the rest.
+fn big_endian(src: &[u8], model: &str) -> bool {
     let words = src.as_chunks::<2>().0;
     let step = (words.len() / 65_536).max(1);
     let (mut le, mut be) = (0usize, 0usize);
@@ -193,7 +195,7 @@ fn big_endian(src: &[u8]) -> bool {
         le += usize::from(u16::from_le_bytes(*w) >= 1 << 14);
         be += usize::from(u16::from_be_bytes(*w) >= 1 << 14);
     }
-    be < le
+    if be == le { model == "FinePix S2Pro" } else { be < le }
 }
 
 /// The mean of a record of big-endian `u16`s.
@@ -220,14 +222,16 @@ pub(super) fn decode(bytes: &[u8], h: &Header, raw: &[u8], mode: Mode) -> Result
     let Some(src) = raw.get(..need) else {
         return Err(RawError::Unsupported(format!("Fujifilm RAF packing ({} bytes for {cols}x{rows} 16-bit samples)", raw.len())));
     };
-    if raw.len() / 2 >= need {
+    // every sample's block is exactly its size: more is data of some other kind (a wide-DR second exposure?), and
+    // decoding just the first part would drop it silently
+    if raw.len() > need {
         return Err(RawError::Unsupported(format!(
             "Fujifilm RAF with more sensor data than its size ({} bytes for {cols}x{rows} samples; a wide dynamic range file?)",
             raw.len()
         )));
     }
     let layout = layout(h, rows, cols)?;
-    let big = big_endian(src);
+    let big = big_endian(src, &model);
     let bits = if big { 12 } else { 14 };
     let black = record(h, BLACK).and_then(mean_u16).unwrap_or(0.0);
     let wb = record(h, WB_GRGB).and_then(|d| {
@@ -425,6 +429,21 @@ mod tests {
         }
     }
 
+    /// Samples that fit in 14 bits read either way (a flat frame of 0x0020: 32 big-endian, 8192 little-endian) can't
+    /// tell their byte order: the S2Pro's is big-endian, every other body's little-endian.
+    #[test]
+    fn samples_that_cannot_tell_their_byte_order_take_the_bodys() {
+        let px = vec![32u16; 8 * 12];
+        let recs = records(8, 12, 0x0a, (8, 12), [0, 0, 8, 12], 0);
+        let r = crate::decode(&legacy("FinePix S2Pro", &px, true, &recs)).unwrap();
+        assert_eq!((r.data, r.bits), (RawData::U16(px.clone()), 12));
+        let r = crate::decode(&legacy("FinePix S5500", &px, true, &recs)).unwrap();
+        assert_eq!((r.data, r.bits), (RawData::U16(vec![0x2000; 8 * 12]), 14));
+        // when the samples can tell, they decide, whatever the body
+        let px: Vec<u16> = (0..96).map(|i| (i * 37 % 3900 + 100) as u16).collect();
+        assert_eq!(crate::decode(&legacy("FinePix S2Pro", &px, false, &recs)).unwrap().data, RawData::U16(px));
+    }
+
     /// A SuperCCD file whose sites sample `f` at their picture points, with each colour scaled by `gain`.
     fn superccd(s: SuperCcd, rows: usize, cols: usize, f: impl Fn(usize, usize) -> f32, gain: [f32; 3]) -> Vec<u8> {
         let (pw, _) = s.picture_size(rows, cols).unwrap();
@@ -540,6 +559,7 @@ mod tests {
             ("size past the data", legacy("FinePix X", &px, false, &with(&set(FULL_SIZE, u16s(&[9, 12]))))),
             ("huge size", legacy("FinePix X", &px, false, &with(&set(FULL_SIZE, u16s(&[0xffff, 0xffff]))))),
             ("twice the data", legacy("FinePix X", &[px.clone(), px.clone()].concat(), false, &good)),
+            ("a sample more than its size", legacy("FinePix X", &[px.clone(), vec![1000]].concat(), false, &good)),
             ("no layout", legacy("FinePix X", &px, false, &with(&|r| r.retain(|e| e.0 != LAYOUT)))),
             ("unknown layout", legacy("FinePix X", &px, false, &with(&set(LAYOUT, vec![0x40; 4])))),
             // what a TIFF-wrapped RAF whose TIFF is damaged looks like here
