@@ -264,6 +264,96 @@ fn radial_body_drag_keeps_resize_and_rotation_handles() {
     }
 }
 
+/// #2311: picking Linear or Radial Gradient creates nothing; a drag on the photo draws the mask, as in Lightroom.
+/// A linear gradient starts where the drag began and ends where it ended; a radial one is centred where it began
+/// and reaches the pointer. The whole drag is one undo step, and the tool is put down after it.
+#[test]
+fn a_gradient_is_drawn_by_dragging_on_the_photo() {
+    let mut h = detail("panel.masking");
+    click(&mut h, "maskNew:linear");
+    assert!(develop(&h).masks.is_empty(), "picking the tool places no mask");
+    assert_eq!(h.app.ui.tool, "linear");
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.3, "y": 0.2}, {"kind": "drag", "x": 0.4, "y": 0.4},
+        {"kind": "drag", "x": 0.6, "y": 0.7}, {"kind": "up", "x": 0.6, "y": 0.7}]),
+    );
+    let d = develop(&h);
+    assert_eq!(d.masks.len(), 1, "the drag makes one mask");
+    let MaskShape::Linear { start, end } = d.masks[0].components[0].shape.clone() else { panic!("linear") };
+    assert!((start.x - 0.3).abs() < 0.005 && (start.y - 0.2).abs() < 0.005, "{start:?}");
+    assert!((end.x - 0.6).abs() < 0.005 && (end.y - 0.7).abs() < 0.005, "{end:?}");
+    assert_eq!(h.app.session.active_mask, Some(d.masks[0].id));
+    assert!(h.app.ui.tool.is_empty(), "the tool is put down: a drag now edits the gradient");
+    exec(&mut h, "edit.undo", json!({}));
+    assert!(develop(&h).masks.is_empty(), "one undo removes the drawn gradient");
+    exec(&mut h, "edit.redo", json!({}));
+    assert_eq!(develop(&h).masks, d.masks);
+
+    click(&mut h, "maskNew:radial");
+    assert_eq!(develop(&h).masks.len(), 1, "picking the tool places no mask");
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.5, "y": 0.5}, {"kind": "drag", "x": 0.6, "y": 0.55},
+        {"kind": "drag", "x": 0.7, "y": 0.6}, {"kind": "up", "x": 0.7, "y": 0.6}]),
+    );
+    let d = develop(&h);
+    assert_eq!(d.masks.len(), 2);
+    let MaskShape::Radial { center, rx, ry, angle, .. } = d.masks[1].components[0].shape.clone() else { panic!("radial") };
+    // radii in long-edge units
+    let img = h.app.image_rect.unwrap();
+    let long = img.width().max(img.height()) as f64;
+    assert!((center.x - 0.5).abs() < 0.005 && (center.y - 0.5).abs() < 0.005, "{center:?}");
+    assert!((rx - 0.2 * img.width() as f64 / long).abs() < 0.005, "{rx}");
+    assert!((ry - 0.1 * img.height() as f64 / long).abs() < 0.005, "{ry}");
+    assert_eq!(angle, 0.0);
+    assert!(h.app.ui.tool.is_empty());
+    exec(&mut h, "edit.undo", json!({}));
+    assert_eq!(develop(&h).masks.len(), 1, "one undo removes the drawn ellipse");
+}
+
+/// #2311: L / R and Add / Subtract ▸ Linear or Radial Gradient pick the tool too; a drag draws the component into the
+/// selected mask, and Esc puts the tool down.
+#[test]
+fn gradient_shortcuts_and_components_wait_for_a_drag() {
+    use lightcraft_develop::MaskOp;
+    let mut h = detail("panel.masking");
+    let r = h.request("ui.key", json!({"key": "l"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert_eq!(h.app.ui.tool, "linear", "L picks the tool");
+    assert!(develop(&h).masks.is_empty(), "and places nothing");
+    h.request("ui.key", json!({"key": "escape"}), T);
+    h.step();
+    assert!(h.app.ui.tool.is_empty(), "Esc puts it down");
+    pointer(&mut h, json!([{"kind": "down", "x": 0.3, "y": 0.3}, {"kind": "drag", "x": 0.5, "y": 0.5}, {"kind": "up", "x": 0.5, "y": 0.5}]));
+    assert!(develop(&h).masks.is_empty(), "a drag without the tool draws nothing");
+
+    exec(&mut h, "mask.add", json!({"kind": "luminanceRange"}));
+    click(&mut h, "button:maskMinus:1");
+    click(&mut h, "maskComp:subtract:linear");
+    assert_eq!(develop(&h).masks[0].components.len(), 1, "picking it adds nothing yet");
+    assert_eq!(h.app.ui.tool, "linear:subtract");
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.5, "y": 0.1}, {"kind": "drag", "x": 0.5, "y": 0.3},
+        {"kind": "up", "x": 0.5, "y": 0.3}]),
+    );
+    let d = develop(&h);
+    assert_eq!(d.masks.len(), 1, "a component, not a new mask");
+    let c = &d.masks[0].components;
+    assert_eq!(c.len(), 2);
+    assert_eq!(c[1].op, MaskOp::Subtract);
+    let MaskShape::Linear { start, end } = c[1].shape.clone() else { panic!("linear") };
+    assert!((start.y - 0.1).abs() < 0.005 && (end.y - 0.3).abs() < 0.005, "{start:?} {end:?}");
+    exec(&mut h, "edit.undo", json!({}));
+    assert_eq!(develop(&h).masks[0].components.len(), 1, "one undo step");
+
+    let r = h.request("engine.execute", json!({"command": "tool.radial", "params": {"op": "xor"}}), T);
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(h.app.ui.tool.is_empty(), "a bad op picks nothing");
+}
+
 #[test]
 fn mask_overlay_keys_and_pins() {
     use lightcraft_pipeline::{MaskView, Overlay};

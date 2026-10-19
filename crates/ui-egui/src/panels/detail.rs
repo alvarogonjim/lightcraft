@@ -48,8 +48,8 @@ pub enum Gesture {
         start: (f32, f32),
         at: Pos2,
     },
-    /// Dragging component `comp` of `mask`: its pin (`handle` 0) or a linear gradient's start (1)
-    /// or end (2).
+    /// Dragging component `comp` of `mask`: its pin (`handle` 0), a linear gradient's start (1)
+    /// or end (2), a radial one's edges (1..4) or rotation (5), or the radii of one being drawn (6).
     MaskHandle {
         mask: u32,
         comp: usize,
@@ -1905,6 +1905,17 @@ pub(crate) fn component_pin(shape: &MaskShape) -> Option<Point> {
     }
 }
 
+/// The gradient a drag on the photo draws while the Linear or Radial Gradient tool is picked: its
+/// kind, and the operation when it is a component of the selected mask (`tool` = `linear`,
+/// `radial`, `linear:subtract`, …).
+pub(crate) fn gradient_tool(tool: &str) -> Option<(&str, Option<&str>)> {
+    let (kind, op) = match tool.split_once(':') {
+        Some((kind, op)) => (kind, Some(op)),
+        None => (tool, None),
+    };
+    matches!(kind, "linear" | "radial").then_some((kind, op))
+}
+
 /// `shape` moved by `dn` (normalized); `handle` 1/2 = a linear gradient's start/end set to `at`.
 fn moved_shape(shape: &MaskShape, handle: u8, dn: Point, at: Point, map: &CanvasMap, alt: bool) -> MaskShape {
     let mv = |p: Point| Point::new(p.x + dn.x, p.y + dn.y);
@@ -1946,6 +1957,11 @@ fn moved_shape(shape: &MaskShape, handle: u8, dn: Point, at: Point, map: &Canvas
                 let dy = (at.y - center.y) / l.1;
                 let new_angle = dy.atan2(dx).to_degrees();
                 MaskShape::Radial { center, rx, ry, angle: new_angle, feather, invert }
+            }
+            6 => {
+                // being drawn: centred where the drag began, reaching the pointer
+                let (new_rx, new_ry) = radii_to(center, at, map);
+                MaskShape::Radial { center, rx: new_rx, ry: new_ry, angle, feather, invert }
             }
             _ => MaskShape::Radial { center: mv(center), rx, ry, angle, feather, invert },
         },
@@ -2093,6 +2109,11 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                 }
             }
         }
+    }
+    // Linear / Radial Gradient picked: a drag on the photo draws it
+    if let Some((kind, op)) = gradient_tool(&app.ui.tool).map(|(kind, op)| (kind.to_string(), op.map(str::to_string))) {
+        draw_gradient(app, ui, resp, map, &kind, op.as_deref());
+        return;
     }
     // Colour Range "Pick": the Masking panel owns the loupe's clicks (general_interaction
     // never runs while it is open), so the eyedropper is handled here too.
@@ -2244,6 +2265,83 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         app.gesture = None;
         let _ = app.run("develop.endInteraction", json!({}));
     }
+}
+
+/// The Linear or Radial Gradient tool, picked and not drawn yet (#2311): over the photo the pointer
+/// is a crosshair, and a drag makes the gradient once the pointer has moved, a linear one starting
+/// (full effect) where the drag began and ending at the pointer, a radial one centred there with a
+/// corner of its bounding box at the pointer. The rest of the drag goes on as one on its end (or its
+/// radii), all one undo step, and the tool is put down. `op` makes it a component of the selected
+/// mask. For the keyboard, a stand-in at the photo's centre: Return places the gradient where
+/// `mask.add` puts one by default.
+fn draw_gradient(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, kind: &str, op: Option<&str>) {
+    let name = if kind == "linear" { "New linear gradient (Return adds it)" } else { "New radial gradient (Return adds it)" };
+    let keys = crate::canvas_keys::handle(
+        ui,
+        "mask:new",
+        crate::i18n::tr(name),
+        crate::canvas_keys::position_text(0.5, 0.5),
+        map.screen(Point::new(0.5, 0.5)),
+    );
+    let mut params = serde_json::Map::new();
+    params.insert("kind".into(), json!(kind));
+    if let Some(op) = op {
+        params.insert("op".into(), json!(op));
+    }
+    let command = if op.is_some() { "mask.addComponent" } else { "mask.add" };
+    if keys.activated {
+        app.ui.tool.clear();
+        if let Err(e) = app.run(command, params.into()) {
+            app.toast(ui.ctx(), e);
+        }
+        return;
+    }
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    // a press held still makes nothing until the pointer moves
+    let (Some(a), Some(b)) = (ui.input(|i| i.pointer.press_origin()), resp.interact_pointer_pos()) else { return };
+    if !resp.dragged() || a.distance(b) < 2.0 {
+        return;
+    }
+    let (a, b) = (map.norm(a), map.norm(b));
+    let handle = if kind == "linear" {
+        params.insert("start".into(), json!([a.x, a.y]));
+        params.insert("end".into(), json!([b.x, b.y]));
+        2
+    } else {
+        let (rx, ry) = radii_to(a, b, map);
+        params.insert("center".into(), json!([a.x, a.y]));
+        params.insert("rx".into(), json!(rx));
+        params.insert("ry".into(), json!(ry));
+        6
+    };
+    app.ui.tool.clear();
+    let _ = app.run("develop.beginInteraction", json!({"label": if op.is_some() { "Edit Mask" } else { "Add Mask" }}));
+    if let Err(e) = app.run(command, params.into()) {
+        let _ = app.run("develop.endInteraction", json!({}));
+        app.toast(ui.ctx(), e);
+        return;
+    }
+    // the rest of the drag moves what was just made: the selected mask's last component
+    let made = app.session.active_mask.and_then(|mid| {
+        let d = app.session.develop_of(app.session.active()?)?;
+        let m = d.masks.iter().find(|m| m.id == mid)?;
+        Some((mid, m.components.len().checked_sub(1)?, m.components.last()?.shape.clone()))
+    });
+    match made {
+        Some((mask, comp, original_shape)) => app.gesture = Some(Gesture::MaskHandle { mask, comp, handle, original_shape }),
+        None => {
+            let _ = app.run("develop.endInteraction", json!({}));
+        }
+    }
+}
+
+/// The radii (long-edge units) of an upright ellipse centred on `center` with a corner of its
+/// bounding box at `at`.
+fn radii_to(center: Point, at: Point, map: &CanvasMap) -> (f64, f64) {
+    let l = frame_long_norm(map);
+    (((at.x - center.x) / l.0).abs().max(0.01), ((at.y - center.y) / l.1).abs().max(0.01))
 }
 
 /// A mask handle's name for screen readers: `handle` 0 is the component's pin, 1..5 a radial

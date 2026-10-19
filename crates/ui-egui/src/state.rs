@@ -813,6 +813,8 @@ pub struct UiState {
     #[serde(skip)]
     pub grading_hidden: Option<(lightcraft_catalog::PhotoId, [bool; 3])>,
     /// Active on-canvas tool: "", "brush", "linear", "radial", "wbPicker", "straighten", "remove".
+    /// "linear" / "radial": picked, the next drag on the photo draws one ("linear:subtract", …: as
+    /// a component of the selected mask).
     pub tool: String,
     pub brush_size: f32,
     pub brush_feather: f32,

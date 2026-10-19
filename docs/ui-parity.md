@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (zoom row: soft proofing sharp at 1:1; canvas tools by keyboard; focus-order test; ~50 unnamed hand-drawn widgets named) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** patch (a gradient tool picked by keyboard: a New gradient point places it) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 How LightCraft's interaction compares with Lightroom's: views, panels, tools and handles, modifier
 keys, shortcuts, zoom, context menus and feel. Rows for individual menu items and shortcuts live in
@@ -113,7 +113,9 @@ and Space, and the app's other shortcuts still work.
 - Remove: each spot's target and source; a "New spot" point that starts at the centre, moves
   with the arrows, and turns into a spot of the brush's size when you press Return.
 - Masking: the four edges and the rotation handle of a radial gradient, the start and end of a
-  linear one, and each mask pin (moving one selects its mask).
+  linear one, and each mask pin (moving one selects its mask). A pointer draws a new gradient by
+  dragging on the photo (#2311); by keyboard the Linear and Radial tiles place one at once, and
+  with the tool picked (L / R) a "New linear / radial gradient" point places it with Return.
 
 Focus order: the audit now also counts any widget that takes the focus or a click, whatever its
 role. That found about 50 hand-drawn icons, tiles and rows with no name: top-bar icons, flags and
@@ -130,6 +132,7 @@ a real screen reader on any platform yet.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | patch | Accessibility: gradients are drawn by dragging (#2311); by keyboard the Linear / Radial tiles still place one at once, and a New gradient point (Return) places one once L / R picked the tool |
 | 2026-10-14 | patch | Shortcuts: Visualize HDR loses its default ⇧H, which cycles the Tool Overlay (issue #224); both PRs had claimed it |
 | 2026-10-12 | minor | Accessibility: crop handles, spots, gradient handles and mask pins operable by keyboard with AccessKit names and values; Tab order test for the right panels; hand-drawn icons and rows named; 55% → 75%; UI remaining 34–58 h → 32–54 h |
 | 2026-10-13 | minor | Shortcuts: Tool Overlay modes for spot and mask pins on ⇧H (H stays Remove; issue #224), listed with the deliberate differences; dropped from the missing list |
