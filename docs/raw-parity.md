@@ -147,7 +147,7 @@ checked (the per-model CC0 sweeps of October 2026); compressed ORF (OM / Olympus
 | SR2 | DSC-R1 | ✅ | CC0 3221 sample |
 | RAF | uncompressed, lossless and lossy compressed; Bayer and X-Trans; GFX 14/16-bit | ✅ | 24 files from 13 bodies exact |
 | RAF | pre-X FinePix without a raw IFD, bare Bayer (S5500, S200EXR in EXR-DR mode) | ✅ | 2 CC0 files, pinned (`body_corpus.rs`); `raf_legacy.rs` |
-| RAF | SuperCCD (rows: S5000 … S9600; lines: S3Pro, S5Pro, S100FS, S6000fd; columns: S2Pro) | 🟡 | 11 CC0 files follow the camera JPEG (`body_corpus.rs`); the decoder demosaics in the 45° frame itself (AHD), so the Demosaic setting and AI Denoise don't apply; raw blocks longer than their recorded size (a wide-DR second exposure?) refused (#2063) |
+| RAF | SuperCCD (rows: S5000 … S9600; lines: S3Pro, S5Pro, S100FS, S6000fd; columns: S2Pro) | 🟡 | 11 CC0 files follow the camera JPEG (`body_corpus.rs`); the decoder demosaics in the 45° frame itself (AHD), so the Demosaic setting and AI Denoise don't apply; the S3Pro and S5Pro are decoded from their primary photodiodes only (their files hold a second, darker block of the same size after the raw block, most likely the low-sensitivity photodiodes, which isn't read); raw blocks longer than their recorded size (a wide-DR second exposure?) refused (#2063) |
 | RAF | SuperCCD SR (F700, F710, S20 Pro), DBP for GX680 | ⬜ | refused, preview (`raf_legacy.rs`; no CC0 SR sample, the GX680's matches no SuperCCD mapping) |
 | ORF | uncompressed 16-bit, 12-bit packed, two-field 12-bit, 12.8 bpp | ✅ | E-1, E-400, XZ-2 corpus; #651 |
 | ORF | **compressed** (every Olympus / OM body since ~2008) | ⬜ | `orf.rs` refuses; the E-M1 and E-M10 III corpus files are `KNOWN_UNSUPPORTED` |

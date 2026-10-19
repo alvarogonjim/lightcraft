@@ -10,7 +10,10 @@
 //!   big-endian in the oldest body (S2Pro). Read in the wrong order nearly every sample lands at or above 2^14, so the
 //!   order that keeps them below decides (the body, when a black or flat frame can't).
 //! - Record `0x4000` (eight `u16`) matches the dark floor where the camera left the black level in (S100FS ≈ 514,
-//!   S200EXR ≈ 517, S2Pro ≈ 122) and is zero where the floor is zero.
+//!   S200EXR ≈ 517, S2Pro ≈ 122) and is zero, or a few counts (S5000: 0, 1, 0, 10), where the floor is zero.
+//! - The S3Pro and S5Pro files hold a second block of the raw block's size right after it, much darker (median
+//!   60–110, at most 8192): most likely their second, low-sensitivity photodiodes. It isn't read: these bodies are
+//!   decoded from their primary photodiodes alone.
 //! - The first FujiLayout byte tells the layout. 8–11: an ordinary Bayer, RGGB at (0, 0), its crop records in
 //!   samples (S5500, S200EXR). Bit 7 set or 0–2: a SuperCCD, whose photosites lie on a square grid turned 45°, so
 //!   they fill every other point of a picture grid at half their pitch (a quincunx). `0x0121` and the crop records
@@ -37,9 +40,17 @@ const WB_GRGB: u16 = 0x2ff0;
 const BLACK: u16 = 0x4000;
 
 /// Bodies in this container whose sensor data none of the layouts here reads: the DBP for GX680 (its CC0 sample
-/// matches no SuperCCD mapping) and the SuperCCD SR bodies that pair each site with a second, low-sensitivity
-/// photodiode, of which no CC0 sample shows how the file stores it. They stay refused rather than misread.
+/// matches no SuperCCD mapping) and the first SuperCCD SR bodies, which pair each site with a second, low-sensitivity
+/// photodiode and of which no CC0 sample shows how the file stores them. They stay refused rather than misread.
+/// Names compare as [`same_body`] does.
 const UNDECODED: &[&str] = &["DBP for GX680", "FinePix F700", "FinePix F710", "FinePix S20Pro"];
+
+/// Whether the header's camera name is `body`, whatever the spacing and case: the S2Pro's header (and its Exif
+/// `Model`) says `FinePixS2Pro`, the later bodies' `FinePix S3Pro`.
+fn same_body(model: &str, body: &str) -> bool {
+    let squeeze = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    squeeze(model).eq_ignore_ascii_case(&squeeze(body))
+}
 
 /// How a SuperCCD's stored grid (row `r`, sample `k`) maps onto the picture's half-pitch grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,7 +206,7 @@ fn big_endian(src: &[u8], model: &str) -> bool {
         le += usize::from(u16::from_le_bytes(*w) >= 1 << 14);
         be += usize::from(u16::from_be_bytes(*w) >= 1 << 14);
     }
-    if be == le { model == "FinePix S2Pro" } else { be < le }
+    if be == le { same_body(model, "FinePix S2Pro") } else { be < le }
 }
 
 /// The mean of a record of big-endian `u16`s.
@@ -206,7 +217,7 @@ fn mean_u16(d: &[u8]) -> Option<f32> {
 
 pub(super) fn decode(bytes: &[u8], h: &Header, raw: &[u8], mode: Mode) -> Result<RawImage> {
     let model = camera_name(bytes);
-    if UNDECODED.contains(&model.as_str()) {
+    if UNDECODED.iter().any(|body| same_body(&model, body)) {
         return Err(RawError::Unsupported(format!("Fujifilm {model} RAF (its sensor layout is not decoded yet)")));
     }
     // every body with bare samples records RawImageSize; the TIFF-wrapped ones don't, so a damaged one of those
@@ -222,11 +233,11 @@ pub(super) fn decode(bytes: &[u8], h: &Header, raw: &[u8], mode: Mode) -> Result
     let Some(src) = raw.get(..need) else {
         return Err(RawError::Unsupported(format!("Fujifilm RAF packing ({} bytes for {cols}x{rows} 16-bit samples)", raw.len())));
     };
-    // every sample's block is exactly its size: more is data of some other kind (a wide-DR second exposure?), and
-    // decoding just the first part would drop it silently
+    // every sample's raw block is exactly its size; a longer one holds data no sample shows (the S3Pro / S5Pro second
+    // block comes after the raw block, not in it), and decoding just its first part would drop the rest silently
     if raw.len() > need {
         return Err(RawError::Unsupported(format!(
-            "Fujifilm RAF with more sensor data than its size ({} bytes for {cols}x{rows} samples; a wide dynamic range file?)",
+            "Fujifilm RAF whose raw block is longer than its size records ({} bytes for {cols}x{rows} 16-bit samples)",
             raw.len()
         )));
     }
@@ -430,13 +441,16 @@ mod tests {
     }
 
     /// Samples that fit in 14 bits read either way (a flat frame of 0x0020: 32 big-endian, 8192 little-endian) can't
-    /// tell their byte order: the S2Pro's is big-endian, every other body's little-endian.
+    /// tell their byte order: the S2Pro's is big-endian, every other body's little-endian. The S2Pro's header (and its
+    /// Exif `Model`) says `FinePixS2Pro`, without the space the later bodies have.
     #[test]
     fn samples_that_cannot_tell_their_byte_order_take_the_bodys() {
         let px = vec![32u16; 8 * 12];
         let recs = records(8, 12, 0x0a, (8, 12), [0, 0, 8, 12], 0);
-        let r = crate::decode(&legacy("FinePix S2Pro", &px, true, &recs)).unwrap();
-        assert_eq!((r.data, r.bits), (RawData::U16(px.clone()), 12));
+        for name in ["FinePixS2Pro", "FinePix S2Pro"] {
+            let r = crate::decode(&legacy(name, &px, true, &recs)).unwrap();
+            assert_eq!((&r.data, r.bits), (&RawData::U16(px.clone()), 12), "{name}");
+        }
         let r = crate::decode(&legacy("FinePix S5500", &px, true, &recs)).unwrap();
         assert_eq!((r.data, r.bits), (RawData::U16(vec![0x2000; 8 * 12]), 14));
         // when the samples can tell, they decide, whatever the body
@@ -615,6 +629,10 @@ mod tests {
                 ),
             ),
             ("an undecoded body", legacy("DBP for GX680", &px, false, &good)),
+            // a header may spell the name with or without the space before the model (the S2Pro's has none)
+            ("an undecoded body, spaced", legacy("FinePix S20Pro", &px, false, &good)),
+            ("an undecoded body, unspaced", legacy("FinePixS20Pro", &px, false, &good)),
+            ("an undecoded body, unspaced F700", legacy("FinePixF700", &px, false, &good)),
         ];
         for (what, bytes) in cases {
             assert!(crate::decode(&bytes).is_err(), "{what}");
