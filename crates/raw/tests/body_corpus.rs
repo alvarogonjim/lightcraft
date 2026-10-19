@@ -226,6 +226,7 @@ fn camera_jpeg_grid(jpeg: &[u8], gw: usize, gh: usize) -> Vec<[f64; 3]> {
     sum.iter().zip(&n).map(|(s, n)| s.map(|v| v / n.max(1.0))).collect()
 }
 
+/// Pearson's correlation coefficient of two series of the same length.
 fn pearson(a: &[f64], b: &[f64]) -> f64 {
     let n = a.len() as f64;
     let (ma, mb) = (a.iter().sum::<f64>() / n, b.iter().sum::<f64>() / n);

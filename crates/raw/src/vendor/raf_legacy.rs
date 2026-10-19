@@ -109,11 +109,13 @@ struct Turned {
 }
 
 impl Turned {
+    /// The turned grid of a `picture_width × picture_height` picture whose sites have `x + y ≡ parity (mod 2)`.
     fn new(picture_width: usize, picture_height: usize, parity: usize) -> Turned {
         let offset = picture_height.div_ceil(2);
         Turned { parity, offset, width: (picture_width + picture_height) / 2 + 1, height: (picture_width + 2 * offset) / 2 + 1 }
     }
 
+    /// The cell (row-major) of site (x, y) of the picture.
     fn index(&self, x: usize, y: usize) -> usize {
         let u = (x + y).saturating_sub(self.parity) / 2;
         let v = (x + 2 * self.offset).saturating_sub(y + self.parity) / 2;
@@ -179,6 +181,8 @@ enum Layout {
     SuperCcd(SuperCcd),
 }
 
+/// The arrangement the FujiLayout record gives a `rows × cols` stored grid: 8–11 a Bayer, bit 7 SuperCCD rows, 0–2
+/// SuperCCD lines when RawImageSize's lines fit the stored rows, or columns when they fit them turned a quarter.
 fn layout(h: &Header, rows: usize, cols: usize) -> Result<Layout> {
     let first = record(h, LAYOUT).and_then(|l| l.first().copied());
     let lines = || pair(h, RAW_SIZE).filter(|&(l, w)| l > 0 && w > 0);
@@ -215,6 +219,9 @@ fn mean_u16(d: &[u8]) -> Option<f32> {
     (!v.is_empty()).then(|| v.iter().map(|w| f32::from(u16::from_be_bytes(*w))).sum::<f32>() / v.len() as f32)
 }
 
+/// Decode a pre-X FinePix RAF from its header `h` and its raw block `raw` of bare 16-bit samples: a Bayer as it is
+/// stored, a SuperCCD as linear camera RGB on its picture grid ([`develop`]). The bodies in [`UNDECODED`] and raw
+/// blocks that aren't exactly the recorded size are refused.
 pub(super) fn decode(bytes: &[u8], h: &Header, raw: &[u8], mode: Mode) -> Result<RawImage> {
     let model = camera_name(bytes);
     if UNDECODED.iter().any(|body| same_body(&model, body)) {
@@ -405,6 +412,7 @@ mod tests {
         out
     }
 
+    /// `v` as big-endian bytes, as the records hold them.
     fn u16s(v: &[u16]) -> Vec<u8> {
         v.iter().flat_map(|x| x.to_be_bytes()).collect()
     }
@@ -422,6 +430,8 @@ mod tests {
         ]
     }
 
+    /// A Bayer body's bare samples come back as they were stored, in either byte order, with the crop, black level and
+    /// white balance its records give.
     #[test]
     fn bayer_layout_reads_bare_samples_in_either_byte_order() {
         let (rows, cols) = (8usize, 12usize);
@@ -557,6 +567,7 @@ mod tests {
         }
     }
 
+    /// Damaged, inconsistent and refused files are errors in a probe as in a decode: never a panic, never a misread.
     #[test]
     fn malformed_legacy_rafs_are_errors() {
         let px = vec![1000u16; 8 * 12];
@@ -658,6 +669,7 @@ mod tests {
         assert_eq!(r.active_area, Rect::new(0, 0, 24, 8));
     }
 
+    /// The big-endian `u32` at `at`: a header pointer.
     fn be(b: &[u8], at: usize) -> usize {
         u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]) as usize
     }

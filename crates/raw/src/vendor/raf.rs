@@ -75,6 +75,7 @@ pub(crate) fn header(b: &[u8]) -> Result<Header<'_>> {
     Ok(Header { jpeg, records, raw })
 }
 
+/// The first header record tagged `tag`.
 pub(super) fn record<'a>(h: &Header<'a>, tag: u16) -> Option<&'a [u8]> {
     h.records.iter().find(|r| r.0 == tag).map(|r| r.1)
 }
@@ -118,6 +119,8 @@ pub(crate) fn unpack_row(src: &[u8], bits: u32, words32: bool, out: &mut [u16]) 
     }
 }
 
+/// Decode a RAF whose raw block is a TIFF with a raw IFD; the pre-X FinePix bodies, which store bare samples instead,
+/// go to [`super::raf_legacy`].
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let h = header(bytes)?;
     let raw = h.raw.ok_or_else(|| RawError::Corrupt("RAF without raw data".into()))?;
