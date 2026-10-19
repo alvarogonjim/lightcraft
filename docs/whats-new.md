@@ -1,6 +1,6 @@
 # What's new in LightCraft
 
-## 2026-10-14
+## 2026-10-19
 
 ### Gradients go where you drag
 - Picking Linear or Radial under Create New Mask, or pressing L or R, no longer drops a gradient at the top or the
@@ -8,8 +8,12 @@
   linear gradient runs from where you press (full effect) to where you let go, which also sets its angle; a radial
   one is centred where you press and reaches the pointer. Linear and Radial Gradient in a mask's + and − menus work
   the same way. Esc puts the tool down without making anything, and Edit ▸ Undo removes a drawn gradient in one
-  step. By keyboard, the Linear and Radial tiles still place a gradient at once, and once L or R picked the tool, a
-  "New gradient" point on the photo places one with Return.
+  step. While the tool is picked, a click that doesn't drag only shows how to draw the gradient, and the handles of
+  the masks already on the photo wait until you have drawn it or pressed Esc. By keyboard, the Linear and Radial
+  tiles still place a gradient at once, and once L or R picked the tool, a "New gradient" point on the photo places
+  one with Return.
+
+## 2026-10-14
 
 ### Model downloads time out on a name that doesn't resolve
 - Model downloads (AI denoise, faces, SAM) give up on a server name that doesn't resolve within the connect timeout,

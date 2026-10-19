@@ -2299,6 +2299,11 @@ fn draw_gradient(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respon
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
+    // a click that never moved makes nothing either: say again how to draw one
+    if resp.clicked() {
+        app.toast(ui.ctx(), crate::i18n::tr("Drag on the photo to draw the gradient · Esc cancels"));
+        return;
+    }
     // a press held still makes nothing until the pointer moves
     let (Some(a), Some(b)) = (ui.input(|i| i.pointer.press_origin()), resp.interact_pointer_pos()) else { return };
     if !resp.dragged() || a.distance(b) < 2.0 {

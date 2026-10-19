@@ -312,6 +312,23 @@ fn a_gradient_is_drawn_by_dragging_on_the_photo() {
     assert_eq!(develop(&h).masks.len(), 1, "one undo removes the drawn ellipse");
 }
 
+/// #2311: a click that doesn't drag makes no gradient, keeps the tool, and says again how to draw one, rather than
+/// doing nothing anyone can see.
+#[test]
+fn a_click_without_a_drag_says_how_to_draw_the_gradient() {
+    let mut h = detail("panel.masking");
+    let hint = crate::i18n::tr("Drag on the photo to draw the gradient · Esc cancels").to_string();
+    for kind in ["linear", "radial"] {
+        click(&mut h, &format!("maskNew:{kind}"));
+        h.app.ui.toast = None;
+        pointer(&mut h, json!([{"kind": "down", "x": 0.4, "y": 0.4}, {"kind": "up", "x": 0.4, "y": 0.4}]));
+        assert!(develop(&h).masks.is_empty(), "{kind}: a click makes no gradient");
+        assert_eq!(h.app.ui.tool, kind, "{kind}: the tool stays picked");
+        assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.clone()), Some(hint.clone()), "{kind}");
+        exec(&mut h, "tool.none", json!({}));
+    }
+}
+
 /// #2311: L / R and Add / Subtract ▸ Linear or Radial Gradient pick the tool too; a drag draws the component into the
 /// selected mask, and Esc puts the tool down.
 #[test]
