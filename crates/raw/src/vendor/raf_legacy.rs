@@ -364,7 +364,7 @@ fn develop(g: Geometry, samples: &[u16], cols: usize, black: f32, white: f32) ->
     let at = |x: usize, y: usize| rgb.data.get(turned.index(x, y)).copied();
     let mut out = vec![0f32; pw * ph * 3];
     out.par_chunks_mut(pw * 3).enumerate().for_each(|(y, line)| {
-        for (x, px) in line.chunks_exact_mut(3).enumerate() {
+        for (x, px) in line.as_chunks_mut::<3>().0.iter_mut().enumerate() {
             let v = if (x + y) % 2 == turned.parity {
                 at(x, y).unwrap_or_default()
             } else {
@@ -376,7 +376,7 @@ fn develop(g: Geometry, samples: &[u16], cols: usize, black: f32, white: f32) ->
                     .fold(([0f32; 3], 0f32), |(s, n), c| ([s[0] + c[0], s[1] + c[1], s[2] + c[2]], n + 1.0));
                 if n > 0.0 { sum.map(|c| c / n) } else { [0.0; 3] }
             };
-            px.copy_from_slice(&v);
+            *px = v;
         }
     });
     out
